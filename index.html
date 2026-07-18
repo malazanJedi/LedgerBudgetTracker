@@ -1268,15 +1268,29 @@
   <div class="grid-2">
     <div class="panel">
       <div class="panel-header"><span class="panel-title">Preferences</span></div>
+
+      <!-- App currency switch -->
       <div class="setting-row">
         <div>
-          <div class="setting-label">Currency Symbol</div>
-          <div class="setting-desc">Used throughout the app</div>
+          <div class="setting-label">App Currency</div>
+          <div class="setting-desc">All amounts displayed in this currency</div>
         </div>
-        <select id="settingCurrency" class="form-control" style="width:80px" onchange="saveSetting('currency',this.value);refreshAll()">
-          <option value="$">$</option><option value="€">€</option><option value="£">£</option><option value="¥">¥</option><option value="₹">₹</option>
-        </select>
+        <div class="type-toggle" style="width:160px">
+          <button class="type-btn" id="currUSD" onclick="setAppCurrency('USD')">USD $</button>
+          <button class="type-btn" id="currAED" onclick="setAppCurrency('AED')">AED د.إ</button>
+        </div>
       </div>
+
+      <!-- AED exchange rate -->
+      <div class="setting-row">
+        <div>
+          <div class="setting-label">AED → USD Rate</div>
+          <div class="setting-desc">1 AED = ? USD (default: 0.2723 / 1 USD = 3.6725 AED)</div>
+        </div>
+        <input type="number" id="settingAedRate" class="form-control" style="width:110px" step="0.0001" min="0.0001"
+          placeholder="0.2723" oninput="saveAedRate(this.value)">
+      </div>
+
       <div class="setting-row">
         <div>
           <div class="setting-label">Categories</div>
@@ -1335,8 +1349,22 @@
           <input type="text" id="txDesc" class="form-control" placeholder="e.g. Grocery shopping">
         </div>
         <div class="form-group">
-          <label class="form-label">Amount</label>
-          <input type="number" id="txAmount" class="form-control" placeholder="0.00" min="0" step="0.01">
+          <label class="form-label" id="txAmountLabel">Amount</label>
+          <input type="number" id="txAmount" class="form-control" placeholder="0.00" min="0" step="0.01" oninput="updateAedPreview()">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Entry Currency</label>
+          <div class="type-toggle">
+            <button class="type-btn" id="entryCurrUSD" onclick="setEntryCurrency('USD')">USD $</button>
+            <button class="type-btn active-income" id="entryCurrAED" onclick="setEntryCurrency('AED')">AED د.إ</button>
+          </div>
+        </div>
+        <!-- AED conversion preview (shown only when AED selected) -->
+        <div class="form-group form-full" id="aedPreviewRow" style="display:none">
+          <div style="background:var(--bg2);border:1px solid var(--border);border-radius:3px;padding:8px 12px;font-family:var(--font-mono);font-size:11px;display:flex;justify-content:space-between;align-items:center">
+            <span style="color:var(--text3)">CONVERTED TO USD @ <span id="aedRateDisplay">3.6725</span> AED/USD</span>
+            <span id="aedConvertedDisplay" style="color:var(--accent);font-size:14px;font-weight:700">$0.00</span>
+          </div>
         </div>
         <div class="form-group">
           <label class="form-label">Date</label>
@@ -1365,6 +1393,7 @@
         </div>
       </div>
       <input type="hidden" id="txEditId">
+      <input type="hidden" id="txEntryCurrency" value="USD">
       <div class="form-actions">
         <button class="btn" onclick="closeModal('txModal')">Cancel</button>
         <button class="btn btn-primary" onclick="saveTx()">Save Transaction</button>
@@ -1476,6 +1505,15 @@
         "Original description" and "status" are ignored. Amount should be positive.<br>
         All imported transactions are set to type "expense" by default.
       </div>
+      <div class="form-group" style="margin-bottom:16px">
+        <label class="form-label">Amount Currency in CSV</label>
+        <div class="type-toggle" style="margin-top:6px">
+          <button class="type-btn active-income" id="importCurrUSD" onclick="setImportCurrency('USD')">USD $</button>
+          <button class="type-btn" id="importCurrAED" onclick="setImportCurrency('AED')">AED د.إ</button>
+        </div>
+        <div style="font-family:var(--font-mono);font-size:10px;color:var(--text3);margin-top:6px" id="importCurrNote">Amounts will be imported as-is in USD.</div>
+      </div>
+      <input type="hidden" id="importCsvCurrency" value="USD">
       <input type="file" id="csvFile" accept=".csv" class="form-control" style="margin-bottom:16px">
       <div class="form-actions" style="padding-top:0;border-top:none;margin-top:0">
         <button class="btn" onclick="closeModal('importModal')">Cancel</button>
@@ -1521,7 +1559,7 @@
 const DEFAULTS = {
   expenseCategories: ['Food & Dining','Transport','Housing','Utilities','Healthcare','Shopping','Entertainment','Education','Personal Care','Subscriptions','Travel','Other'],
   incomeCategories: ['Salary','Freelance','Investment','Rental','Gift','Other Income'],
-  settings: { currency: '$' }
+  settings: { currency: '$', appCurrency: 'USD', aedRate: 3.6725 }
 };
 
 let data = {
@@ -1572,13 +1610,66 @@ function uid() { return Date.now().toString(36) + Math.random().toString(36).sli
 //  CURRENCY
 // ═══════════════════════════════════════════════════════
 
-function fmt(n) {
-  const c = data.settings.currency || '$';
-  return c + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const CURRENCY_CONFIG = {
+  USD: { symbol: '$', code: 'USD' },
+  AED: { symbol: 'د.إ', code: 'AED' }
+};
+
+function getAppCurrency() { return data.settings.appCurrency || 'USD'; }
+function getAedRate()     { return parseFloat(data.settings.aedRate) || 3.6725; } // AED per 1 USD
+function aedToUsd(aed)    { return aed / getAedRate(); }
+function usdToAed(usd)    { return usd * getAedRate(); }
+
+function fmtInAppCurrency(usdAmount) {
+  const cur = getAppCurrency();
+  const sym = CURRENCY_CONFIG[cur].symbol;
+  const val = cur === 'AED' ? usdToAed(usdAmount) : usdAmount;
+  return sym + Math.abs(val).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
+
+// fmt: always display in the app's chosen currency
+function fmt(n) { return fmtInAppCurrency(n); }
 
 function fmtSigned(n) {
   return (n >= 0 ? '+' : '−') + fmt(n);
+}
+
+function fmtAed(aed) {
+  return 'د.إ' + Math.abs(aed).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function setAppCurrency(cur) {
+  data.settings.appCurrency = cur;
+  data.settings.currency = CURRENCY_CONFIG[cur].symbol;
+  saveData();
+  syncSettingsUI();
+  refreshAll();
+}
+
+function saveAedRate(val) {
+  const rate = parseFloat(val);
+  if (rate > 0) { data.settings.aedRate = rate; saveData(); }
+}
+
+// Entry currency in the Add Transaction modal
+function setEntryCurrency(cur) {
+  document.getElementById('txEntryCurrency').value = cur;
+  document.getElementById('entryCurrUSD').className = 'type-btn' + (cur === 'USD' ? ' active-income' : '');
+  document.getElementById('entryCurrAED').className = 'type-btn' + (cur === 'AED' ? ' active-income' : '');
+  document.getElementById('aedPreviewRow').style.display = cur === 'AED' ? 'block' : 'none';
+  document.getElementById('txAmountLabel').textContent = cur === 'AED' ? 'Amount (AED)' : 'Amount (USD)';
+  updateAedPreview();
+}
+
+function updateAedPreview() {
+  const cur = document.getElementById('txEntryCurrency').value;
+  if (cur !== 'AED') return;
+  const aed = parseFloat(document.getElementById('txAmount').value) || 0;
+  const usd = aedToUsd(aed);
+  const rate = getAedRate();
+  document.getElementById('aedRateDisplay').textContent = rate.toFixed(4);
+  document.getElementById('aedConvertedDisplay').textContent =
+    '$' + usd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 // ═══════════════════════════════════════════════════════
@@ -1721,10 +1812,10 @@ function renderDashBudget(mk) {
     const spent = data.transactions.filter(t => t.type === 'expense' && t.category === b.category && txInMonth(t, mk)).reduce((s, t) => s + t.amount, 0);
     const pct = b.limit > 0 ? Math.min(100, (spent / b.limit) * 100) : 0;
     const color = pct > 100 ? 'var(--red)' : pct > 80 ? 'var(--amber)' : 'var(--accent)';
-    return `<div class="budget-item">
+    return `<div class="budget-item" data-budget-drilldown="${b.category}" style="cursor:pointer;padding:6px 4px;border-radius:3px;transition:background 0.15s" onmouseover="this.style.background='var(--bg2)'" onmouseout="this.style.background=''">
       <div class="budget-meta">
         <div class="budget-name" style="color:${color}">${getCatIcon(b.category)} ${b.category}</div>
-        <div class="budget-amounts">${fmt(spent)} / ${fmt(b.limit)}</div>
+        <div class="budget-amounts" style="display:flex;align-items:center;gap:6px">${fmt(spent)} / ${fmt(b.limit)}<span style="color:var(--text3);font-size:16px">›</span></div>
       </div>
       <div class="budget-bar-track"><div class="budget-bar-fill" style="width:${pct}%;background:${color}"></div></div>
     </div>`;
@@ -2075,6 +2166,9 @@ function txRow(tx, compact = false) {
   const color = getCatColor(tx.category, tx.type);
   const tags = (tx.tags || []).map(t => `<span class="tx-tag">${t}</span>`).join('');
   const rec = tx.recurring ? `<span class="recurring-badge">${tx.recurring}</span>` : '';
+  const aedSub = tx.aedAmount
+    ? `<div style="font-family:var(--font-mono);font-size:10px;color:var(--text3);text-align:right;margin-top:2px">${fmtAed(tx.aedAmount)} original</div>`
+    : '';
   return `<div class="tx-item" data-tx-edit="${tx.id}">
     <div class="tx-icon" style="background:${color}22;font-size:18px">${getCatIcon(tx.category)}</div>
     <div class="tx-info">
@@ -2088,6 +2182,7 @@ function txRow(tx, compact = false) {
     <div class="tx-date">${tx.date}</div>
     <div>
       <div class="tx-amount ${tx.type}">${tx.type==='income'?'+':'-'}${fmt(tx.amount)}</div>
+      ${aedSub}
       <div class="tx-actions">
         <button class="btn btn-icon" data-tx-split="${tx.id}" title="Split">✂</button>
         <button class="btn btn-icon btn-danger" data-tx-delete="${tx.id}" title="Delete">✕</button>
@@ -2140,6 +2235,7 @@ function openAddTransaction() {
   document.getElementById('txRecurring').value = '';
   document.getElementById('txNotes').value = '';
   setTxType('expense');
+  setEntryCurrency('USD');
   populateCategorySelect('txCategory', 'expense');
   openModal('txModal');
 }
@@ -2163,14 +2259,22 @@ function editTx(id) {
   document.getElementById('txEditId').value = id;
   document.getElementById('txModalTitle').textContent = 'Edit Transaction';
   document.getElementById('txDesc').value = tx.description;
-  document.getElementById('txAmount').value = tx.amount;
   document.getElementById('txDate').value = tx.date;
-  document.getElementById('txTags').value = (tx.tags || []).join(', ');
+  document.getElementById('txTags').value = (tx.tags || []).filter(t => t !== 'AED').join(', ');
   document.getElementById('txRecurring').value = tx.recurring || '';
   document.getElementById('txNotes').value = tx.notes || '';
   setTxType(tx.type);
   populateCategorySelect('txCategory', tx.type, tx.category);
   document.getElementById('txModal').dataset.type = tx.type;
+  // Restore entry currency: if originally AED, show AED amount
+  if (tx.aedAmount) {
+    setEntryCurrency('AED');
+    document.getElementById('txAmount').value = tx.aedAmount;
+    updateAedPreview();
+  } else {
+    setEntryCurrency('USD');
+    document.getElementById('txAmount').value = tx.amount;
+  }
   openModal('txModal');
 }
 
@@ -2178,20 +2282,35 @@ function saveTx() {
   const id = document.getElementById('txEditId').value;
   const type = document.getElementById('txModal').dataset.type || 'expense';
   const desc = document.getElementById('txDesc').value.trim();
-  const amount = parseFloat(document.getElementById('txAmount').value);
+  const rawAmount = parseFloat(document.getElementById('txAmount').value);
+  const entryCur = document.getElementById('txEntryCurrency').value;
   const date = document.getElementById('txDate').value;
   const category = document.getElementById('txCategory').value;
-  const tags = document.getElementById('txTags').value.split(',').map(t => t.trim()).filter(Boolean);
+  let tags = document.getElementById('txTags').value.split(',').map(t => t.trim()).filter(Boolean);
   const recurring = document.getElementById('txRecurring').value;
   const notes = document.getElementById('txNotes').value.trim();
 
-  if (!desc || !amount || !date) { alert('Please fill in description, amount, and date.'); return; }
+  if (!desc || !rawAmount || !date) { showToast('Please fill in description, amount, and date.'); return; }
+
+  // Convert AED to USD for storage; always store USD internally
+  let amount, aedAmount;
+  if (entryCur === 'AED') {
+    aedAmount = rawAmount;
+    amount = aedToUsd(rawAmount);
+    if (!tags.includes('AED')) tags = ['AED', ...tags];
+  } else {
+    amount = rawAmount;
+    aedAmount = null;
+  }
+
+  const txData = { id: id || uid(), type, description: desc, amount, date, category, tags, recurring, notes };
+  if (aedAmount) txData.aedAmount = aedAmount;
 
   if (id) {
     const idx = data.transactions.findIndex(t => t.id === id);
-    if (idx > -1) data.transactions[idx] = { id, type, description: desc, amount, date, category, tags, recurring, notes };
+    if (idx > -1) data.transactions[idx] = txData;
   } else {
-    data.transactions.push({ id: uid(), type, description: desc, amount, date, category, tags, recurring, notes });
+    data.transactions.push(txData);
   }
 
   saveData();
@@ -2633,6 +2752,7 @@ function exportCSV() {
 function importCSV() {
   const file = document.getElementById('csvFile').files[0];
   if (!file) return;
+  const importCsvCur = document.getElementById('importCsvCurrency').value || 'USD';
   const reader = new FileReader();
   reader.onload = e => {
     const lines = e.target.result.split('\n').filter(Boolean);
@@ -2676,21 +2796,26 @@ function importCSV() {
       const desc     = get(iDesc);
       const category = get(iCat) || 'Other';
       const rawAmt   = get(iAmount).replace(/,/g, '').replace(/[^0-9.\-]/g, '');
-      const amount   = Math.abs(parseFloat(rawAmt));
+      const parsedAmt = Math.abs(parseFloat(rawAmt));
 
-      if (!date || !desc || isNaN(amount)) return;
+      if (!date || !desc || isNaN(parsedAmt)) return;
 
-      data.transactions.push({
+      const isAed = importCsvCur === 'AED';
+      const amount = isAed ? aedToUsd(parsedAmt) : parsedAmt;
+      const txObj = {
         id: uid(),
         date,
         description: desc,
         amount,
         type: 'expense',
         category,
-        tags: [],
+        tags: isAed ? ['AED'] : [],
         notes: '',
         recurring: ''
-      });
+      };
+      if (isAed) txObj.aedAmount = parsedAmt;
+
+      data.transactions.push(txObj);
       count++;
     });
 
@@ -2717,8 +2842,23 @@ function closeModal(id) { document.getElementById(id).classList.remove('open'); 
 //  SETTINGS
 // ═══════════════════════════════════════════════════════
 
+function setImportCurrency(cur) {
+  document.getElementById('importCsvCurrency').value = cur;
+  document.getElementById('importCurrUSD').className = 'type-btn' + (cur === 'USD' ? ' active-income' : '');
+  document.getElementById('importCurrAED').className = 'type-btn' + (cur === 'AED' ? ' active-income' : '');
+  document.getElementById('importCurrNote').textContent = cur === 'AED'
+    ? `Amounts will be converted from AED to USD at ${getAedRate().toFixed(4)} AED/USD and tagged "AED".`
+    : 'Amounts will be imported as-is in USD.';
+}
+
 function syncSettingsUI() {
-  document.getElementById('settingCurrency').value = data.settings.currency || '$';
+  const cur = data.settings.appCurrency || 'USD';
+  const usdBtn = document.getElementById('currUSD');
+  const aedBtn = document.getElementById('currAED');
+  if (usdBtn) usdBtn.className = 'type-btn' + (cur === 'USD' ? ' active-income' : '');
+  if (aedBtn) aedBtn.className = 'type-btn' + (cur === 'AED' ? ' active-income' : '');
+  const rateEl = document.getElementById('settingAedRate');
+  if (rateEl) rateEl.value = data.settings.aedRate || 3.6725;
 }
 
 function clearAllData() {
@@ -2789,9 +2929,19 @@ document.getElementById('confirmCancel').addEventListener('click', function() {
 // ═══════════════════════════════════════════════════════
 
 document.addEventListener('click', function(e) {
-  // Budget drilldown click
+  // Budget drilldown click (works from dashboard AND budgets tab)
   const budgetDrill = e.target.closest('[data-budget-drilldown]');
-  if (budgetDrill && !e.target.closest('button')) { openBudgetDrilldown(budgetDrill.dataset.budgetDrilldown); return; }
+  if (budgetDrill && !e.target.closest('button')) {
+    const cat = budgetDrill.dataset.budgetDrilldown;
+    if (currentView !== 'budgets') {
+      showView('budgets');
+      // slight delay so the view renders before drilldown opens
+      setTimeout(() => openBudgetDrilldown(cat), 50);
+    } else {
+      openBudgetDrilldown(cat);
+    }
+    return;
+  }
 
   // Delete buttons — check first, before any edit handlers
   const txDel = e.target.closest('[data-tx-delete]');
@@ -2835,7 +2985,7 @@ document.addEventListener('click', function(e) {
 window.addEventListener('resize', () => {
   if (currentView === 'dashboard') { renderCashFlowChart(); renderDonut(getMonthKey(dashMonthOffset)); }
   if (currentView === 'reports') renderReports();
-  if (currentView === 'goals') renderSavingsLineChart();
+  if (currentView === 'savings') renderSavingsLineChart();
 });
 
 function init() {
