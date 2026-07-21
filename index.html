@@ -1011,8 +1011,8 @@
 
   <!-- KPI row -->
   <div class="grid-5">
-    <div class="panel kpi">
-      <div class="kpi-label">Monthly Income</div>
+    <div class="panel kpi" style="cursor:pointer" onclick="goToIncomeTransactions()" title="View income transactions">
+      <div class="kpi-label">Monthly Income ›</div>
       <div class="kpi-value" id="kpiIncome" style="color:var(--accent)">$0</div>
       <div class="kpi-sub" id="kpiIncomeSub">This month</div>
       <div class="kpi-bar"><div class="kpi-bar-fill" id="kpiIncomeBar" style="background:var(--accent);width:100%"></div></div>
@@ -1248,7 +1248,7 @@
     </div>
     <canvas id="annualChart" height="240"></canvas>
   </div>
-  <div class="grid-2">
+  <div class="grid-2" style="margin-bottom:20px">
     <div class="panel">
       <div class="panel-header"><span class="panel-title">Monthly Breakdown</span></div>
       <table class="summary-table" id="monthlyTable">
@@ -1260,6 +1260,40 @@
       <div class="panel-header"><span class="panel-title">Top Spending Categories</span></div>
       <canvas id="categoryBarChart" height="280"></canvas>
     </div>
+  </div>
+
+  <!-- AED Transactions Report -->
+  <div class="panel">
+    <div class="panel-header">
+      <span class="panel-title">AED Transactions</span>
+      <div style="display:flex;align-items:center;gap:10px">
+        <div style="font-family:var(--font-mono);font-size:11px;color:var(--text3)">FROM</div>
+        <input type="date" id="aedReportFrom" class="form-control" style="width:150px" oninput="renderAedReport()">
+        <div style="font-family:var(--font-mono);font-size:11px;color:var(--text3)">TO</div>
+        <input type="date" id="aedReportTo" class="form-control" style="width:150px" oninput="renderAedReport()">
+        <button class="btn" onclick="resetAedReportDates()">Reset</button>
+      </div>
+    </div>
+    <!-- Summary row -->
+    <div style="display:flex;gap:24px;margin-bottom:16px;padding:12px 16px;background:var(--bg2);border-radius:3px;border:1px solid var(--border)">
+      <div>
+        <div style="font-family:var(--font-mono);font-size:10px;color:var(--text3);letter-spacing:1px">TRANSACTIONS</div>
+        <div id="aedReportCount" style="font-family:var(--font-display);font-size:22px;font-weight:700;color:var(--text)">0</div>
+      </div>
+      <div>
+        <div style="font-family:var(--font-mono);font-size:10px;color:var(--text3);letter-spacing:1px">TOTAL (AED)</div>
+        <div id="aedReportTotalAed" style="font-family:var(--font-display);font-size:22px;font-weight:700;color:var(--amber)">د.إ0.00</div>
+      </div>
+      <div>
+        <div style="font-family:var(--font-mono);font-size:10px;color:var(--text3);letter-spacing:1px">TOTAL (USD)</div>
+        <div id="aedReportTotalUsd" style="font-family:var(--font-display);font-size:22px;font-weight:700;color:var(--red)">$0.00</div>
+      </div>
+      <div>
+        <div style="font-family:var(--font-mono);font-size:10px;color:var(--text3);letter-spacing:1px">RATE USED</div>
+        <div id="aedReportRate" style="font-family:var(--font-display);font-size:22px;font-weight:700;color:var(--text2)">—</div>
+      </div>
+    </div>
+    <div class="tx-list" id="aedReportList"></div>
   </div>
 </div>
 
@@ -1501,8 +1535,8 @@
     </div>
     <div class="modal-body">
       <div style="font-family:var(--font-mono);font-size:11px;color:var(--text3);line-height:2;margin-bottom:16px">
-        Expected columns: <span style="color:var(--accent)">date, description, original description, category, amount, status</span><br>
-        "Original description" and "status" are ignored. Amount should be positive.<br>
+        Required columns: <span style="color:var(--accent)">date</span>, <span style="color:var(--accent)">amount</span>, and either <span style="color:var(--accent)">description</span> or <span style="color:var(--accent)">details</span> (used as description).<br>
+        Optional: <span style="color:var(--text2)">category</span>. All other columns (original description, status, currency, balance, debit/credit) are ignored.<br>
         All imported transactions are set to type "expense" by default.
       </div>
       <div class="form-group" style="margin-bottom:16px">
@@ -2143,6 +2177,51 @@ function renderCategoryBarChart() {
   });
 }
 
+function resetAedReportDates() {
+  const now = new Date();
+  const y = now.getFullYear();
+  document.getElementById('aedReportFrom').value = `${y}-01-01`;
+  document.getElementById('aedReportTo').value = now.toISOString().slice(0,10);
+  renderAedReport();
+}
+
+function renderAedReport() {
+  const from = document.getElementById('aedReportFrom').value;
+  const to   = document.getElementById('aedReportTo').value;
+
+  let txs = data.transactions.filter(t => (t.tags || []).includes('AED'));
+  if (from) txs = txs.filter(t => t.date >= from);
+  if (to)   txs = txs.filter(t => t.date <= to);
+  txs = txs.sort((a, b) => b.date.localeCompare(a.date));
+
+  const totalAed = txs.reduce((s, t) => s + (t.aedAmount || t.amount * getAedRate()), 0);
+  const totalUsd = txs.reduce((s, t) => s + t.amount, 0);
+
+  document.getElementById('aedReportCount').textContent = txs.length;
+  document.getElementById('aedReportTotalAed').textContent = fmtAed(totalAed);
+  document.getElementById('aedReportTotalUsd').textContent =
+    '$' + totalUsd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  document.getElementById('aedReportRate').textContent = getAedRate().toFixed(4) + ' AED/USD';
+
+  const listEl = document.getElementById('aedReportList');
+  listEl.innerHTML = txs.length
+    ? txs.map(t => txRow(t)).join('')
+    : '<div class="empty"><div class="empty-icon">🇦🇪</div>No AED transactions in this date range</div>';
+}
+
+// Navigate from income KPI tile → transactions filtered to income
+function goToIncomeTransactions() {
+  showView('transactions');
+  // Set type filter to income and clear others, then re-render
+  const typeFilter = document.getElementById('txTypeFilter');
+  const monthFilter = document.getElementById('txMonthFilter');
+  if (typeFilter) typeFilter.value = 'income';
+  if (monthFilter) monthFilter.value = getMonthKey(dashMonthOffset); // same month as dashboard
+  const search = document.getElementById('txSearch');
+  if (search) search.value = '';
+  renderTransactions();
+}
+
 // ═══════════════════════════════════════════════════════
 //  TRANSACTIONS
 // ═══════════════════════════════════════════════════════
@@ -2704,6 +2783,13 @@ function renderReports() {
     </tr>`;
   }).filter(Boolean);
   tbody.innerHTML = rows.length ? rows.join('') : '<tr><td colspan="5" style="text-align:center;color:var(--text3);font-family:var(--font-mono);font-size:11px;padding:20px">No data for this year</td></tr>';
+
+  // AED report: initialise date pickers if blank, then render
+  const fromEl = document.getElementById('aedReportFrom');
+  const toEl   = document.getElementById('aedReportTo');
+  if (!fromEl.value) fromEl.value = `${reportYear}-01-01`;
+  if (!toEl.value)   toEl.value   = new Date().toISOString().slice(0,10);
+  renderAedReport();
 }
 
 // ═══════════════════════════════════════════════════════
@@ -2758,37 +2844,55 @@ function importCSV() {
     const lines = e.target.result.split('\n').filter(Boolean);
     if (!lines.length) return;
 
-    // Parse a single CSV line into an array of values, handling quoted fields
+    // Parse a single CSV line respecting quoted fields
     function parseLine(line) {
       const vals = [];
       let cur = '', inQuote = false;
       for (let i = 0; i < line.length; i++) {
         const ch = line[i];
         if (ch === '"') {
-          if (inQuote && line[i+1] === '"') { cur += '"'; i++; } // escaped quote
+          if (inQuote && line[i+1] === '"') { cur += '"'; i++; }
           else inQuote = !inQuote;
         } else if (ch === ',' && !inQuote) {
           vals.push(cur.trim()); cur = '';
-        } else {
-          cur += ch;
-        }
+        } else { cur += ch; }
       }
       vals.push(cur.trim());
       return vals;
     }
 
-    // Build a column-index map from the header row (case-insensitive, trimmed)
-    const headers = parseLine(lines[0]).map(h => h.toLowerCase().replace(/[^a-z0-9]/g, ''));
-    const col = name => headers.indexOf(name.toLowerCase().replace(/[^a-z0-9]/g, ''));
+    // Normalise a header string to bare lowercase alphanumeric for matching
+    const norm = s => s.toLowerCase().replace(/[^a-z0-9]/g, '');
 
-    const iDate     = col('date');
-    const iDesc     = col('description');
-    const iCat      = col('category');
-    const iAmount   = col('amount');
-    // "original description" and "status" are intentionally ignored
+    const rawHeaders = parseLine(lines[0]);
+    const headers = rawHeaders.map(norm);
+    const col = (...names) => {
+      for (const n of names) {
+        const idx = headers.indexOf(norm(n));
+        if (idx >= 0) return idx;
+      }
+      return -1;
+    };
+
+    // Flexible column resolution:
+    //   date   → "date"
+    //   desc   → "details" first, then "description" (so bank-2 "details" wins over its own "description")
+    //   cat    → "category" (optional)
+    //   amount → "amount"
+    // Everything else (original description, status, currency, balance, debit/credit) is ignored.
+    const iDate   = col('date');
+    const iDesc   = col('details', 'description');   // "details" takes priority
+    const iCat    = col('category');
+    const iAmount = col('amount');
+
+    if (iDate < 0 || iDesc < 0 || iAmount < 0) {
+      showToast('CSV missing required columns: date, description/details, amount.');
+      return;
+    }
 
     let count = 0;
     lines.slice(1).forEach(line => {
+      if (!line.trim()) return;
       const parts = parseLine(line);
       const get = i => (i >= 0 && i < parts.length) ? parts[i] : '';
 
@@ -2798,7 +2902,7 @@ function importCSV() {
       const rawAmt   = get(iAmount).replace(/,/g, '').replace(/[^0-9.\-]/g, '');
       const parsedAmt = Math.abs(parseFloat(rawAmt));
 
-      if (!date || !desc || isNaN(parsedAmt)) return;
+      if (!date || !desc || isNaN(parsedAmt) || parsedAmt === 0) return;
 
       const isAed = importCsvCur === 'AED';
       const amount = isAed ? aedToUsd(parsedAmt) : parsedAmt;
